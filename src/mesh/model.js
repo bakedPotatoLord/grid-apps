@@ -12,12 +12,13 @@
 // use: mesh.api
 // use: mesh.util
 // use: mesh.group
+// use: geo.toast
 gapp.register("mesh.model", [], (root, exports) => {
 
 const { MeshPhongMaterial, MeshBasicMaterial, LineBasicMaterial } = THREE;
 const { BufferGeometry, BufferAttribute, DoubleSide, Mesh } = THREE;
 const { Box3, Vector3, Triangle } = THREE;
-const { base, mesh, moto } = root;
+const { base, geo, mesh, moto } = root;
 const { space } = moto;
 const { api } = mesh;
 const { newBounds, newPolygon, polygons } = base;
@@ -375,6 +376,19 @@ mesh.model = class MeshModel extends mesh.object {
 
     get geometry() {
         return this.mesh.geometry;
+    }
+
+    get toast() {
+        let toast = geo.toast.create(this.geometry, 20);
+
+        // let edges = new THREE.BufferGeometry();
+        // edges.setAttribute('position', new THREE.Float32BufferAttribute( toast.vertices, 3 ));
+        // let material = new THREE.LineBasicMaterial({ color: 0 });
+        // let outline = new THREE.LineSegments(edges, material);
+        // this.mesh.add(outline);
+
+        // this.mesh.add(toast.mesh);
+        this.group.group3.add(toast.mesh);
     }
 
     get attributes() {
