@@ -136,33 +136,35 @@ function createEdgeData(obj, thresholdAngle = 20) {
         // console.log(faces);
     }
 
-    // Create a BufferAttribute for the line indices
-    const numVertices = vertices.length / 4;  // Assuming each line point has 4 components (x, y, z, w)
-    const textureDimension = Math.ceil(Math.sqrt(numVertices));  // Get a near-square dimension
-    const totalEdges = numVertices / 2;
-    // Adjust the vertices array to fit into a 2D texture
-    const paddedLength = textureDimension * textureDimension * 4;  // 4 components per vertex (RGBA)
-    const paddedVertices = new Float32Array(paddedLength);
-    // Copy the original vertices into the padded array
-    paddedVertices.set(vertices.toFloat32());
-
-    const edgeLines = new THREE.DataTexture(paddedVertices, textureDimension, textureDimension, THREE.RGBAFormat, THREE.FloatType);
-    edgeLines.needsUpdate = true;
-    // edgeLines.minFilter = THREE.NearestFilter;
-    // edgeLines.magFilter = THREE.NearestFilter;
-
     const material = new ShaderMaterial({
+        transparent: true,
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         uniforms: {
-            burnRadius: { value: 1.0 },
-            edgeLines: { value: edgeLines },
-            totalEdges: { value: totalEdges },
-            textureDimension: { value: textureDimension },
+            burnRadius: { value: 5.0 },
         }
     });
 
+    const colorAttribute = positionAttr.clone();
+    const colors = colorAttribute.array;
+    const zero = -0.0;
+    const R = 1.0, G = 0.0, B = 0.0;
+    for (let i = 0; i < colors.length; ) {
+        colors[i++] = R * 1.0;
+        colors[i++] = G * 1.0;
+        colors[i++] = B * zero;
+
+        colors[i++] = R * zero;
+        colors[i++] = G * 1.0;
+        colors[i++] = B * 1.0;
+
+        colors[i++] = R * 1.0;
+        colors[i++] = G * zero;
+        colors[i++] = B * 1.0;
+    }
+
     const mgeo = geometry.clone();
+    mgeo.setAttribute('color', colorAttribute);
     const mesh = new THREE.Mesh(mgeo, material);
 
     console.log({ numFaces, faceRecords, pointToEdge, edges: vertices.group(4) });
@@ -171,57 +173,35 @@ function createEdgeData(obj, thresholdAngle = 20) {
 }
 
 const vertexShader = `
-uniform sampler2D edgeLines;     // Texture containing edge endpoints
+attribute vec3 color;
 varying vec3 vPosition;
+varying vec3 vColor;
 
 void main() {
-  vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vColor = color;
+    vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
 const fragmentShader = `
-uniform sampler2D edgeLines;      // Texture containing edge line endpoints
-uniform mat4 modelMatrix;         // Pass the modelMatrix to the fragment shader as a uniform
-uniform int totalEdges;           // Total unpadded line count
 uniform float burnRadius;         // Proximity radius for burn effect
-uniform float textureDimension;   // The width and height of the square texture
 varying vec3 vPosition;           // Vertex position passed from the vertex shader
+varying vec3 vColor;              // Interpolated color from vertex shader
 
-// Fetch a line segment from the edgeLines texture and transform to world space
-vec3 getEdgeLine(int index) {
-    int texWidth = int(textureDimension);                                         // Texture width
-    int row = index / texWidth;                                                   // Row in the texture
-    int col = index % texWidth;                                                   // Column in the texture
-    vec2 uv = vec2(float(col) / textureDimension, float(row) / textureDimension); // Normalize the texture coordinates (UV)
-    vec3 linePoint = texture2D(edgeLines, uv).rgb;                                // Fetch the line point from the 2D texture
-    return (modelMatrix * vec4(linePoint, 1.0)).xyz;                              // Transform the line position to world space using modelMatrix
-  }
-
-// Calculate the distance from the fragment to the closest point on a line segment
-float distanceToLine(vec3 point, vec3 start, vec3 end) {
-  vec3 lineDir = normalize(end - start);                                     // Direction of the line
-  vec3 v = point - start;                                                    // Vector from line start to the point
-  float d = dot(v, lineDir);                                                 // Project the point onto the line
-  vec3 closestPoint = start + clamp(d, 0.0, length(end - start)) * lineDir;  // Find the closest point on the line
-  return length(closestPoint - point);                                       // Return the distance from the point to the closest point on the line
+float logScale(float value) {
+    float epsilon = 1e-6;  // Small constant to avoid log(0)
+    float scaledValue = log(value + epsilon) / log(0.8 + epsilon);  // Log scale normalization
+    return clamp(scaledValue, 0.0, 1.0);  // Keep the value in the range [0.0, 1.0]
 }
 
 void main() {
-  vec4 color = vec4(1.0, 1.0, 1.0, 1.0);  // Base color (white)
-  float burnFactor = 0.0;                 // Accumulate burn factor here
+    vec3 color = clamp(vColor, 0.0, 1.0);
+    gl_FragColor = vec4(color, 1.0);  // stock color gradient
 
-  // Loop through all line segments in the edgeLines texture
-  for (int i = 0; i < totalEdges; i++) {
-    vec3 lineStart = getEdgeLine(i * 2);                                          // Fetch the start point of the line segment
-    vec3 lineEnd = getEdgeLine(i * 2 + 1);                                        // Fetch the end point of the line segment
-    float distToLine = distanceToLine(vPosition, lineStart, lineEnd);             // Calculate the proximity (distance) to the current line segment
-    burnFactor = max(burnFactor, clamp(1.0 - distToLine / burnRadius, 0.0, 1.0)); // Linear gradient effect based on distance to line
-  }
-
-  // Apply darkening effect based on burn factor
-  vec4 burntColor = vec4(color.rgb * (1.0 - burnFactor * 0.8), color.a);  // Darken the color near edges
-  gl_FragColor = burntColor;
+    // float maxColor = logScale( (max(max(color.r, color.g), color.b) - 0.5) * 2.0 );
+    float maxColor = (max(max(color.r, color.g), color.b) - 0.5) * 2.0;
+    gl_FragColor = vec4(vec3(maxColor), 1.0);  // Apply grayscale with full opacity
 }
 `;
 
