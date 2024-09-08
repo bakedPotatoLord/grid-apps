@@ -202,28 +202,33 @@ float distanceToLine(vec3 point, vec3 start, vec3 end) {
 
 void main() {
   vec4 color = vec4(1.0, 1.0, 1.0, 1.0);  // Base color (white)
+
   float burnFactor = 0.0;
 
   // Calculate burn factor for the first line if present
   if (vLineCount >= 1.0) {
     float distToLine1 = distanceToLine(vPosition, vLineStart1, vLineEnd1);
-    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine1));
+    // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine1));
+    burnFactor += 0.2;
   }
 
   // Calculate burn factor for the second line if present
   if (vLineCount >= 2.0) {
     float distToLine2 = distanceToLine(vPosition, vLineStart2, vLineEnd2);
-    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine2));
+    // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine2));
+    burnFactor += 0.2;
   }
 
   // Calculate burn factor for the third line if present
   if (vLineCount >= 3.0) {
     float distToLine3 = distanceToLine(vPosition, vLineStart3, vLineEnd3);
-    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine3));
+    // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine3));
+    burnFactor += 0.2;
   }
 
   // Apply darkening effect based on burn factor
-  vec4 burntColor = color * (1.0 - burnFactor * 0.8);  // Darken the color near edges
+  vec4 burntColor = vec4(color.rgb * burnFactor, color.a);  // Multiply only RGB, keep alpha the same
+
   gl_FragColor = burntColor;
 }
 `;
