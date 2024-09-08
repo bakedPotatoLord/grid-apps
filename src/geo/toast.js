@@ -24,24 +24,33 @@ function createEdgeData(geometry, thresholdAngle = 20) {
     const hashes = new Array(3);
     const edgeData = {};
     const vertices = [];
-    const faceIdxs = new Array(numFaces); // [i1, i2] array per face
+    const faceRecords = new Array(numFaces); // [i1, i2] array per face
+    const pointToEdge = {};
 
-    function repl(arr, val) {
+    function update(rec, val) {
+        let arr = rec.idx;
         if (arr.indexOf(val) >= 0) {
             return;
         }
         let io = arr.indexOf(0);
         if (io >= 0) {
             arr[io] = val;
+            rec.match++;
         } else {
             console.log({ arr, io, val });
             throw "array full";
         }
     }
 
-    for (let i = 0, faceId = 0; i < indexCount; i += 3, faceId++) {
-        let idxs = faceIdxs[faceId] = [0,0,0,0];
+    function updatePoints(pointKey, lineIndex) {
+        let edges = pointToEdge[pointKey];
+        if (!edges) {
+            edges = (pointToEdge[pointKey] = []);
+        }
+        edges.addOnce(lineIndex);
+    }
 
+    for (let i = 0, faceId = 0; i < indexCount; i += 3, faceId++) {
         // points from face
         indexArr[0] = i;
         indexArr[1] = i + 1;
@@ -53,10 +62,13 @@ function createEdgeData(geometry, thresholdAngle = 20) {
         c.fromBufferAttribute(positionAttr, indexArr[2]);
         _triangle.getNormal(_normal);
 
-        // create hashes for the edge from the vertices
+        // create point hashes for the edge from the vertices
         hashes[0] = `${Math.round(a.x * precision)},${Math.round(a.y * precision)},${Math.round(a.z * precision)}`;
         hashes[1] = `${Math.round(b.x * precision)},${Math.round(b.y * precision)},${Math.round(b.z * precision)}`;
         hashes[2] = `${Math.round(c.x * precision)},${Math.round(c.y * precision)},${Math.round(c.z * precision)}`;
+
+        // create face record
+        let rec = faceRecords[faceId] = { points:hashes.slice(), idx:[0,0,0,0], match:0 };
 
         // skip degenerate triangles
         if (hashes[0] === hashes[1] || hashes[1] === hashes[2] || hashes[2] === hashes[0]) {
@@ -75,7 +87,6 @@ function createEdgeData(geometry, thresholdAngle = 20) {
             const reverseHash = `${vecHash1}_${vecHash0}`;
 
             const adjacent = edgeData[reverseHash];
-            // if (reverseHash in edgeData && edgeData[reverseHash]) {
             if (adjacent) {
                 // if we found a sibling edge add it into the vertex array if
                 // it meets the angle threshold and delete the edge from the map.
@@ -83,9 +94,12 @@ function createEdgeData(geometry, thresholdAngle = 20) {
                     let lineIndex = vertices.length / 4 + 1;
                     vertices.push(v0.x, v0.y, v0.z, 0);
                     vertices.push(v1.x, v1.y, v1.z, 0);
-                    repl(idxs, lineIndex);
-                    // add line index to adjacent face
-                    repl(faceIdxs[adjacent.faceId], lineIndex);
+                    // add line index to face and adjoining face
+                    update(rec, lineIndex);
+                    update(faceRecords[adjacent.faceId], lineIndex);
+                    // update points on line records
+                    updatePoints(vecHash0, lineIndex);
+                    updatePoints(vecHash1, lineIndex);
                 }
                 edgeData[reverseHash] = null;
             } else if (!(hash in edgeData)) {
@@ -113,8 +127,15 @@ function createEdgeData(geometry, thresholdAngle = 20) {
         }
     }
 
+    // for faces with no edges matches to lines, check if any of their
+    // points is matched with a line and add those
+    for (let rec of faceRecords.filter(r => r.match === 0)) {
+        let faces = rec.points.map(pk => pointToEdge[pk]);
+        console.log(faces);
+    }
+
     // Create a BufferAttribute for the line indices
-    const edgeIndexArr = faceIdxs.flat().toFloat32(); //new Float32Array(numFaces * 4);
+    const edgeIndexArr = faceRecords.map(r => r.idx).flat().toFloat32(); //new Float32Array(numFaces * 4);
     const edgeIndices = new THREE.DataTexture(edgeIndexArr, numFaces, 1, THREE.RGBAFormat, THREE.FloatType);
     const edgeLines = new THREE.DataTexture(vertices.toFloat32(), vertices.length/4, 1, THREE.RGBAFormat, THREE.FloatType);
     edgeIndices.needsUpdate = true;
@@ -128,7 +149,7 @@ function createEdgeData(geometry, thresholdAngle = 20) {
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         uniforms: {
-            burnRadius: { value: 10.0 },
+            burnRadius: { value: 3.0 },
             edgeLines: { value: edgeLines },
             edgeIndices: { value: edgeIndices },
         }
@@ -137,7 +158,7 @@ function createEdgeData(geometry, thresholdAngle = 20) {
     const mgeo = geometry.clone();
     const mesh = new THREE.Mesh(mgeo, material);
 
-    console.log({ numFaces, vertices, edgeLines, edgeIndices, faceIdxs: faceIdxs.flat() });
+    console.log({ numFaces, faceRecords, pointToEdge });
 
     return { vertices, material, mesh };
 }
@@ -198,7 +219,7 @@ void main() {
   }
 
   // Store the transformed vertex position
-  vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
+  vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
 
   // Pass position to the fragment shader
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
@@ -227,28 +248,29 @@ void main() {
   // Calculate burn factor for the first line if present
   if (vLineCount >= 1.0) {
     float distToLine1 = distanceToLine(vPosition, vLineStart1, vLineEnd1);
-    // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine1));
-    burnFactor += 0.25;
+    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine1));
+    color = vec4(1.0, 0.0, 0.0, 1.0);
   }
 
   // Calculate burn factor for the second line if present
   if (vLineCount >= 2.0) {
     float distToLine2 = distanceToLine(vPosition, vLineStart2, vLineEnd2);
-    // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine2));
-    burnFactor += 0.25;
+    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine2));
+    color = vec4(0.0, 1.0, 0.0, 1.0);
   }
 
   // Calculate burn factor for the third line if present
   if (vLineCount >= 3.0) {
     float distToLine3 = distanceToLine(vPosition, vLineStart3, vLineEnd3);
-    // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine3));
-    burnFactor += 0.25;
+    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine3));
+    color = vec4(0.0, 0.0, 1.0, 1.0);
   }
 
   // Apply darkening effect based on burn factor
-  vec4 burntColor = vec4(color.rgb * (1.0-burnFactor), color.a);  // Multiply only RGB, keep alpha the same
+  vec4 burntColor = vec4(color.rgb * (1.0-burnFactor), color.a);
 
   gl_FragColor = burntColor;
+//   gl_FragColor = color;
 }
 `;
 
