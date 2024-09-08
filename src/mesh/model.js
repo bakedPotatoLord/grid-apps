@@ -381,14 +381,16 @@ mesh.model = class MeshModel extends mesh.object {
     get toast() {
         let toast = geo.toast.create(this.geometry, 20);
 
-        // let edges = new THREE.BufferGeometry();
-        // edges.setAttribute('position', new THREE.Float32BufferAttribute( toast.vertices, 3 ));
-        // let material = new THREE.LineBasicMaterial({ color: 0 });
-        // let outline = new THREE.LineSegments(edges, material);
-        // this.mesh.add(outline);
-
-        // this.mesh.add(toast.mesh);
-        this.group.group3.add(toast.mesh);
+        // if (false) {
+            let edges = new THREE.BufferGeometry();
+            edges.setAttribute('position', new THREE.Float32BufferAttribute( toast.vertices, 4 ));
+            let material = new THREE.LineBasicMaterial({ color: 0 });
+            let outline = new THREE.LineSegments(edges, material);
+            this.group.group3.add(outline);
+        // } else {
+            // this.mesh.add(toast.mesh);
+            this.group.group3.add(toast.mesh);
+        // }
     }
 
     get attributes() {

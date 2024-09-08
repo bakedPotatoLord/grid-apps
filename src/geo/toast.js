@@ -74,13 +74,18 @@ function createEdgeData(geometry, thresholdAngle = 20) {
             const hash = `${vecHash0}_${vecHash1}`;
             const reverseHash = `${vecHash1}_${vecHash0}`;
 
-            if (reverseHash in edgeData && edgeData[reverseHash]) {
+            const adjacent = edgeData[reverseHash];
+            // if (reverseHash in edgeData && edgeData[reverseHash]) {
+            if (adjacent) {
                 // if we found a sibling edge add it into the vertex array if
                 // it meets the angle threshold and delete the edge from the map.
-                repl(idxs, vertices.length / 2 + 1);
                 if (_normal.dot(edgeData[reverseHash].normal) <= thresholdDot) {
+                    let lineIndex = vertices.length / 4 + 1;
                     vertices.push(v0.x, v0.y, v0.z, 0);
                     vertices.push(v1.x, v1.y, v1.z, 0);
+                    repl(idxs, lineIndex);
+                    // add line index to adjacent face
+                    repl(faceIdxs[adjacent.faceId], lineIndex);
                 }
                 edgeData[reverseHash] = null;
             } else if (!(hash in edgeData)) {
@@ -89,8 +94,22 @@ function createEdgeData(geometry, thresholdAngle = 20) {
                     index0: indexArr[j],
                     index1: indexArr[jNext],
                     normal: _normal.clone(),
+                    faceId
                 };
             }
+        }
+    }
+
+    // iterate over all remaining, unmatched edges and add them to the vertex array
+    if (false)
+    for ( const key in edgeData ) {
+        if ( edgeData[ key ] ) {
+            const { index0, index1 } = edgeData[ key ];
+            _v0.fromBufferAttribute( positionAttr, index0 );
+            _v1.fromBufferAttribute( positionAttr, index1 );
+            vertices.push( _v0.x, _v0.y, _v0.z, 0 );
+            vertices.push( _v1.x, _v1.y, _v1.z, 0 );
+            console.log('missed', key);
         }
     }
 
@@ -209,25 +228,25 @@ void main() {
   if (vLineCount >= 1.0) {
     float distToLine1 = distanceToLine(vPosition, vLineStart1, vLineEnd1);
     // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine1));
-    burnFactor += 0.2;
+    burnFactor += 0.25;
   }
 
   // Calculate burn factor for the second line if present
   if (vLineCount >= 2.0) {
     float distToLine2 = distanceToLine(vPosition, vLineStart2, vLineEnd2);
     // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine2));
-    burnFactor += 0.2;
+    burnFactor += 0.25;
   }
 
   // Calculate burn factor for the third line if present
   if (vLineCount >= 3.0) {
     float distToLine3 = distanceToLine(vPosition, vLineStart3, vLineEnd3);
     // burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine3));
-    burnFactor += 0.2;
+    burnFactor += 0.25;
   }
 
   // Apply darkening effect based on burn factor
-  vec4 burntColor = vec4(color.rgb * burnFactor, color.a);  // Multiply only RGB, keep alpha the same
+  vec4 burntColor = vec4(color.rgb * (1.0-burnFactor), color.a);  // Multiply only RGB, keep alpha the same
 
   gl_FragColor = burntColor;
 }
