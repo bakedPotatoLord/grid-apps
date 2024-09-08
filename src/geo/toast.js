@@ -5,7 +5,9 @@
 // toast/burnt-edge material and helpers
 
 // modified EdgesGeometry to preserve edge/face relationships
-function createEdgeData(geometry, thresholdAngle = 20) {
+function createEdgeData(obj, thresholdAngle = 20) {
+
+    const { geometry, position } = obj;
 
     const { MathUtils, Triangle, Vector3, BufferAttribute, ShaderMaterial } = THREE;
     const _v0 = /*@__PURE__*/ new Vector3();
@@ -134,8 +136,12 @@ function createEdgeData(geometry, thresholdAngle = 20) {
         console.log(faces);
     }
 
+    //DEBUG
+    // faceRecords[3].idx = [5,0,0,0];
+
     // Create a BufferAttribute for the line indices
-    const edgeIndexArr = faceRecords.map(r => r.idx).flat().toFloat32(); //new Float32Array(numFaces * 4);
+    // const edgeIndexArr = new Float32Array(numFaces * 4);
+    const edgeIndexArr = faceRecords.map(r => r.idx).flat().toFloat32();
     const edgeIndices = new THREE.DataTexture(edgeIndexArr, numFaces, 1, THREE.RGBAFormat, THREE.FloatType);
     const edgeLines = new THREE.DataTexture(vertices.toFloat32(), vertices.length/4, 1, THREE.RGBAFormat, THREE.FloatType);
     edgeIndices.needsUpdate = true;
@@ -158,25 +164,32 @@ function createEdgeData(geometry, thresholdAngle = 20) {
     const mgeo = geometry.clone();
     const mesh = new THREE.Mesh(mgeo, material);
 
-    console.log({ numFaces, faceRecords, pointToEdge });
+    console.log({ numFaces, faceRecords, pointToEdge, edges: vertices.group(4) });
 
     return { vertices, material, mesh };
 }
 
 const vertexShader = `
-uniform sampler2D edgeIndices;    // Texture containing edge indices (now a float texture)
-uniform sampler2D edgeLines;      // Texture containing edge line endpoints (float texture)
+uniform sampler2D edgeIndices;    // Texture containing edge point indices
+uniform sampler2D edgeLines;      // Texture containing edge endpoints
 varying vec3 vLineStart1, vLineEnd1, vLineStart2, vLineEnd2, vLineStart3, vLineEnd3;
+varying float vFaceIndex;
 varying float vLineCount;
 varying vec3 vPosition;
 
 vec3 getEdgeLine(int index) {
   // Ensure valid index (1-based to 0-based indexing)
-  if (index < 1) return vec3(0.0);  // If no line, return dummy zero vector
+//   if (index < 1) return vec3(0.0);  // If no line, return dummy zero vector
 
   float texSize = float(textureSize(edgeLines, 0).x);  // Texture size (number of line segments)
   float u = float(index - 1) / texSize;  // Convert 1-based index to 0-based for texture lookup
-  return texture2D(edgeLines, vec2(u, 0.0)).rgb;  // Sample the edgeLines texture
+//   return texture2D(edgeLines, vec2(u, 0.0)).rgb;  // Sample the edgeLines texture
+
+  // Fetch the line position from texture
+  vec3 linePoint = texture2D(edgeLines, vec2(u, 0.0)).rgb;
+
+  // Transform the line position to world space
+  return (modelMatrix * vec4(linePoint, 1.0)).xyz;
 }
 
 vec3 getEdgeIndices(int faceIndex) {
@@ -190,6 +203,7 @@ void main() {
 
   // Calculate the face index using gl_VertexID
   int faceIndex = int(gl_VertexID) / 3;
+  vFaceIndex = float(faceIndex);
 
   // Get edge indices for this face
   vec3 indices = getEdgeIndices(faceIndex);
@@ -197,24 +211,24 @@ void main() {
   // Handle the first line
   if (indices.x > 0.0) {
     int index1 = int(indices.x);
-    vLineStart1 = getEdgeLine(index1 * 2 - 1);  // Get the start of the first line
-    vLineEnd1 = getEdgeLine(index1 * 2);        // Get the end of the first line
+    vLineStart1 = getEdgeLine(index1);
+    vLineEnd1 = getEdgeLine(index1+1);
     vLineCount += 1.0;
   }
 
   // Handle the second line
   if (indices.y > 0.0) {
     int index2 = int(indices.y);
-    vLineStart2 = getEdgeLine(index2 * 2 - 1);  // Get the start of the second line
-    vLineEnd2 = getEdgeLine(index2 * 2);        // Get the end of the second line
+    vLineStart2 = getEdgeLine(index2);
+    vLineEnd2 = getEdgeLine(index2+1);
     vLineCount += 1.0;
   }
 
   // Handle the third line
   if (indices.z > 0.0) {
     int index3 = int(indices.z);
-    vLineStart3 = getEdgeLine(index3 * 2 - 1);  // Get the start of the third line
-    vLineEnd3 = getEdgeLine(index3 * 2);        // Get the end of the third line
+    vLineStart3 = getEdgeLine(index3);
+    vLineEnd3 = getEdgeLine(index3+1);
     vLineCount += 1.0;
   }
 
@@ -231,6 +245,7 @@ varying float vLineCount;  // Number of lines for this face
 varying vec3 vLineStart1, vLineEnd1, vLineStart2, vLineEnd2, vLineStart3, vLineEnd3;
 varying vec3 vPosition;  // Vertex position passed from the vertex shader
 uniform float burnRadius;
+varying float vFaceIndex;
 
 float distanceToLine(vec3 point, vec3 start, vec3 end) {
   vec3 lineDir = normalize(end - start);
@@ -265,6 +280,10 @@ void main() {
     burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine3));
     color = vec4(0.0, 0.0, 1.0, 1.0);
   }
+
+  // DEBUG
+//   float faceColor = vFaceIndex / 12.0;
+//   color = vec4(faceColor, 0.0, 1.0-faceColor, 1.0);
 
   // Apply darkening effect based on burn factor
   vec4 burntColor = vec4(color.rgb * (1.0-burnFactor), color.a);
