@@ -133,11 +133,8 @@ function createEdgeData(obj, thresholdAngle = 20) {
     // points is matched with a line and add those
     for (let rec of faceRecords.filter(r => r.match === 0)) {
         let faces = rec.points.map(pk => pointToEdge[pk]);
-        console.log(faces);
+        // console.log(faces);
     }
-
-    //DEBUG
-    // faceRecords[3].idx = [5,0,0,0];
 
     // Create a BufferAttribute for the line indices
     // const edgeIndexArr = new Float32Array(numFaces * 4);
@@ -155,7 +152,7 @@ function createEdgeData(obj, thresholdAngle = 20) {
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         uniforms: {
-            burnRadius: { value: 3.0 },
+            burnRadius: { value: 1.0 },
             edgeLines: { value: edgeLines },
             edgeIndices: { value: edgeIndices },
         }
@@ -170,126 +167,56 @@ function createEdgeData(obj, thresholdAngle = 20) {
 }
 
 const vertexShader = `
-uniform sampler2D edgeIndices;    // Texture containing edge point indices
-uniform sampler2D edgeLines;      // Texture containing edge endpoints
-varying vec3 vLineStart1, vLineEnd1, vLineStart2, vLineEnd2, vLineStart3, vLineEnd3;
-varying float vFaceIndex;
-varying float vLineCount;
+uniform sampler2D edgeLines;     // Texture containing edge endpoints
 varying vec3 vPosition;
 
-vec3 getEdgeLine(int index) {
-  // Ensure valid index (1-based to 0-based indexing)
-//   if (index < 1) return vec3(0.0);  // If no line, return dummy zero vector
-
-  float texSize = float(textureSize(edgeLines, 0).x);  // Texture size (number of line segments)
-  float u = float(index - 1) / texSize;  // Convert 1-based index to 0-based for texture lookup
-//   return texture2D(edgeLines, vec2(u, 0.0)).rgb;  // Sample the edgeLines texture
-
-  // Fetch the line position from texture
-  vec3 linePoint = texture2D(edgeLines, vec2(u, 0.0)).rgb;
-
-  // Transform the line position to world space
-  return (modelMatrix * vec4(linePoint, 1.0)).xyz;
-}
-
-vec3 getEdgeIndices(int faceIndex) {
-  float texSize = float(textureSize(edgeIndices, 0).x);  // Number of faces (texture width)
-  float u = float(faceIndex) / texSize;  // Normalize face index for texture lookup
-  return texture2D(edgeIndices, vec2(u, 0.0)).rgb;  // Sample edge indices as vec3
-}
-
 void main() {
-  vLineCount = 0.0;
-
-  // Calculate the face index using gl_VertexID
-  int faceIndex = int(gl_VertexID) / 3;
-  vFaceIndex = float(faceIndex);
-
-  // Get edge indices for this face
-  vec3 indices = getEdgeIndices(faceIndex);
-
-  // Handle the first line
-  if (indices.x > 0.0) {
-    int index1 = int(indices.x);
-    vLineStart1 = getEdgeLine(index1);
-    vLineEnd1 = getEdgeLine(index1+1);
-    vLineCount += 1.0;
-  }
-
-  // Handle the second line
-  if (indices.y > 0.0) {
-    int index2 = int(indices.y);
-    vLineStart2 = getEdgeLine(index2);
-    vLineEnd2 = getEdgeLine(index2+1);
-    vLineCount += 1.0;
-  }
-
-  // Handle the third line
-  if (indices.z > 0.0) {
-    int index3 = int(indices.z);
-    vLineStart3 = getEdgeLine(index3);
-    vLineEnd3 = getEdgeLine(index3+1);
-    vLineCount += 1.0;
-  }
-
-  // Store the transformed vertex position
   vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-
-  // Pass position to the fragment shader
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
 const fragmentShader = `
-varying float vLineCount;  // Number of lines for this face
-varying vec3 vLineStart1, vLineEnd1, vLineStart2, vLineEnd2, vLineStart3, vLineEnd3;
-varying vec3 vPosition;  // Vertex position passed from the vertex shader
-uniform float burnRadius;
-varying float vFaceIndex;
+uniform sampler2D edgeLines;      // Texture containing edge line endpoints
+uniform mat4 modelMatrix;         // Pass the modelMatrix to the fragment shader as a uniform
+uniform float burnRadius;         // Proximity radius for burn effect
+varying vec3 vPosition;           // Vertex position passed from the vertex shader
 
+// Fetch a line segment from the edgeLines texture and transform to world space
+vec3 getEdgeLine(int index) {
+  float texSize = float(textureSize(edgeLines, 0).x);       // Texture size (number of line segments)
+  float u = float(index) / texSize;                         // Normalize index for texture lookup
+  vec3 linePoint = texture2D(edgeLines, vec2(u, 0.0)).rgb;  // Fetch the line position from texture
+  return (modelMatrix * vec4(linePoint, 1.0)).xyz;          // Transform the line position to world space using modelMatrix
+}
+
+// Calculate the distance from the fragment to the closest point on a line segment
 float distanceToLine(vec3 point, vec3 start, vec3 end) {
-  vec3 lineDir = normalize(end - start);
-  vec3 v = point - start;
-  float d = dot(v, lineDir);
-  vec3 closestPoint = start + clamp(d, 0.0, length(end - start)) * lineDir;
-  return length(closestPoint - point);
+  vec3 lineDir = normalize(end - start);                    // Direction of the line
+  vec3 v = point - start;                                   // Vector from line start to the point
+  float d = dot(v, lineDir);                                // Project the point onto the line
+  vec3 closestPoint = start + clamp(d, 0.0, length(end - start)) * lineDir;  // Find the closest point on the line
+  return length(closestPoint - point);                      // Return the distance from the point to the closest point on the line
 }
 
 void main() {
   vec4 color = vec4(1.0, 1.0, 1.0, 1.0);  // Base color (white)
+  float burnFactor = 0.0;                 // Accumulate burn factor here
 
-  float burnFactor = 0.0;
+  // Get the total number of line segments (each segment has 2 points)
+  int totalLineSegments = textureSize(edgeLines, 0).x / 2;
 
-  // Calculate burn factor for the first line if present
-  if (vLineCount >= 1.0) {
-    float distToLine1 = distanceToLine(vPosition, vLineStart1, vLineEnd1);
-    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine1));
-    color = vec4(1.0, 0.0, 0.0, 1.0);
+  // Loop through all line segments in the edgeLines texture
+  for (int i = 0; i < totalLineSegments; i++) {
+    vec3 lineStart = getEdgeLine(i * 2);       // Fetch the start point of the line segment
+    vec3 lineEnd = getEdgeLine(i * 2 + 1);     // Fetch the end point of the line segment
+    float distToLine = distanceToLine(vPosition, lineStart, lineEnd); // Calculate the proximity (distance) to the current line segment
+    burnFactor = max(burnFactor, clamp(1.0 - distToLine / burnRadius, 0.0, 1.0)); // Linear gradient effect based on distance to line
   }
-
-  // Calculate burn factor for the second line if present
-  if (vLineCount >= 2.0) {
-    float distToLine2 = distanceToLine(vPosition, vLineStart2, vLineEnd2);
-    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine2));
-    color = vec4(0.0, 1.0, 0.0, 1.0);
-  }
-
-  // Calculate burn factor for the third line if present
-  if (vLineCount >= 3.0) {
-    float distToLine3 = distanceToLine(vPosition, vLineStart3, vLineEnd3);
-    burnFactor = max(burnFactor, smoothstep(burnRadius, 0.0, distToLine3));
-    color = vec4(0.0, 0.0, 1.0, 1.0);
-  }
-
-  // DEBUG
-//   float faceColor = vFaceIndex / 12.0;
-//   color = vec4(faceColor, 0.0, 1.0-faceColor, 1.0);
 
   // Apply darkening effect based on burn factor
-  vec4 burntColor = vec4(color.rgb * (1.0-burnFactor), color.a);
-
+  vec4 burntColor = vec4(color.rgb * (1.0 - burnFactor * 0.8), color.a);  // Darken the color near edges
   gl_FragColor = burntColor;
-//   gl_FragColor = color;
 }
 `;
 
