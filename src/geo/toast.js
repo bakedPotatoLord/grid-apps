@@ -98,8 +98,10 @@ function createedgeHash(obj, thresholdAngle = 20) {
                 // it meets the angle threshold and delete the edge from the map
                 if (_normal.dot(edgeHash[reverseHash].normal) <= thresholdDot) {
                     let lineIndex = edgeData.length / 4 + 1;
-                    edgeData.push(v0.x, v0.y, v0.z, 0);
-                    edgeData.push(v1.x, v1.y, v1.z, 0);
+                    // edgeData.push(v0.x, v0.y, v0.z, 0);
+                    // edgeData.push(v1.x, v1.y, v1.z, 0);
+                    edgeData.push(-5, -5, (lineIndex-1)/10, 0);
+                    edgeData.push( 5, -5, (lineIndex-1)/10, 0);
                     // add line index to face and adjoining face
                     rec.edges.push(lineIndex);
                     rec.points.remove(vecHash0);
@@ -128,19 +130,6 @@ function createedgeHash(obj, thresholdAngle = 20) {
         }
     }
 
-    // iterate over all remaining, unmatched edges and add them to the vertex array
-    if (false)
-    for ( let key in edgeHash ) {
-        if ( edgeHash[ key ] ) {
-            let { index0, index1 } = edgeHash[ key ];
-            _v0.fromBufferAttribute( positionAttr, index0 );
-            _v1.fromBufferAttribute( positionAttr, index1 );
-            edgeData.push( _v0.x, _v0.y, _v0.z, 0 );
-            edgeData.push( _v1.x, _v1.y, _v1.z, 0 );
-            console.log('missed', key);
-        }
-    }
-
     // for faces with no edges matches to lines, check if any of their
     // points is matched with a line and add those
     for (let rec of faces.filter(r => r.points.length)) {
@@ -158,31 +147,36 @@ function createedgeHash(obj, thresholdAngle = 20) {
     let faceEdgeData = new Float32Array(faceEdgesOff.length + faceEdgesIdx.length);
     faceEdgeData.set(faceEdgesOff);
     faceEdgeData.set(faceEdgesIdx, numFaces);
-
-    // TODO: create THREE.DataTexture from faceEdgeData
+    // Calculate the size of the texture to store the face-to-edge data
+    let faceDims = Math.ceil(Math.sqrt(faceEdgeData.length));
+    // Create a padded array to match the texture size
+    let faceTextData = new Float32Array(faceDims * faceDims);  // one float per entry
+    faceTextData.set(faceEdgeData);  // Copy the faceEdgeData into the padded array
+    // Create the DataTexture using the faceTextData
+    let faceIndices = new THREE.DataTexture(faceTextData, faceDims, faceDims, THREE.RedFormat, THREE.FloatType);
+    faceIndices.needsUpdate = true;
 
     // Create a BufferAttribute for the line indices
-    let edgePoints = edgeData.length / 4;  // Assuming each line point has 4 components (x, y, z, w)
-    let edgeDims = Math.ceil(Math.sqrt(edgePoints));  // Get a near-square dimension
-    let edgeCount = edgePoints / 2;
+    let edgeDims = Math.ceil(Math.sqrt(edgeData.length / 4));  // Get a near-square dimension
     // Adjust the edgeData array to fit into a 2D texture
     let edgesPadLen = edgeDims * edgeDims * 4;  // 4 components per vertex (RGBA)
     let edgeTextData = new Float32Array(edgesPadLen);
     edgeTextData.set(edgeData.toFloat32());
-
+    // Create the DataTexture using the edgeTextData
     let edgeLines = new THREE.DataTexture(edgeTextData, edgeDims, edgeDims, THREE.RGBAFormat, THREE.FloatType);
     edgeLines.needsUpdate = true;
 
     let material = new ShaderMaterial({
+        transparent: true,
+        blending: THREE.NormalBlending,
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         uniforms: {
             burnRadius: { value: 1.0 },
             edgeLines: { value: edgeLines },
-            edgeCount: { value: edgeCount },
             edgeDims: { value: edgeDims },
-            // TODO: pass faceDims and faceIndices
-            // TODO: no longer need edgeCount (in shader)
+            faceIndices: { value: faceIndices },
+            faceDims: { value: faceDims }
         }
     });
 
@@ -191,8 +185,11 @@ function createedgeHash(obj, thresholdAngle = 20) {
 
     console.log({
         faces,
-        faceEdgeData,
-        // edges: edgeData.group(4)
+        faceDims,
+        faceTextData,
+        edges: edgeData.group(4),
+        edgeDims,
+        edgeTextData,
     });
 
     return { edgeData, material, mesh };
@@ -221,11 +218,11 @@ precision highp float;
 precision highp int;
 #include <common>
 #include <logdepthbuf_pars_fragment>
-// TODO: add faceDims and faceIndices
+uniform sampler2D faceIndices;    // The DataTexture containing face-to-edge indices
+uniform float faceDims;           // The width and height of the face index texture
 
 uniform sampler2D edgeLines;      // Texture containing edge line endpoints
 uniform mat4 modelMatrix;         // Pass the modelMatrix to the fragment shader as a uniform
-uniform int edgeCount;            // Total unpadded line count
 uniform float burnRadius;         // Proximity radius for burn effect
 uniform float edgeDims;           // The width and height of the square texture
 varying vec3 vPosition;           // Vertex position passed from the vertex shader
@@ -233,10 +230,10 @@ varying float vFaceIndex;         // Face index passed from the vertex shader
 
 // Fetch a line segment from the edgeLines texture and transform to world space
 vec3 getEdgeLine(int index) {
-    int texWidth = int(edgeDims);                                             // Texture width
-    int row = index / texWidth;                                               // Row in the texture
-    int col = index % texWidth;                                               // Column in the texture
-    vec2 uv = vec2(float(col) / edgeDims, float(row) / edgeDims); // Normalize the texture coordinates (UV)
+    int width = int(edgeDims);                                             // Texture width
+    int row = index / width;                                               // Row in the texture
+    int col = index % width;                                               // Column in the texture
+    vec2 uv = vec2(float(col) / edgeDims, float(row) / edgeDims);             // Normalize the texture coordinates (UV)
     vec3 linePoint = texture2D(edgeLines, uv).rgb;                            // Fetch the line point from the 2D texture
     return (modelMatrix * vec4(linePoint, 1.0)).xyz;                          // Transform the line position to world space using modelMatrix
 }
@@ -251,25 +248,63 @@ float distanceToLine(vec3 point, vec3 start, vec3 end) {
 }
 
 void main() {
-    vec4 color = vec4(1.0, 1.0, 1.0, 1.0);  // Base color (white)
+    vec4 color = vec4(1.0, 1.0, 1.0, 0.8);  // Base color (white)
     float burnFactor = 0.0;                 // Accumulate burn factor here
 
-    // TODO: replace with lookup in faceIndices
-    // TODO: jump to offset record and read indices until 0
-    // TODO: calling getEdgeLine() as below
-    // Loop through all line segments in the edgeLines texture
-    for (int i = 0; i < edgeCount; i++) {
-        vec3 lineStart = getEdgeLine(i * 2);                                          // Fetch the start point of the line segment
-        vec3 lineEnd = getEdgeLine(i * 2 + 1);                                        // Fetch the end point of the line segment
-        float distToLine = distanceToLine(vPosition, lineStart, lineEnd);             // Calculate the proximity (distance) to the current line segment
-        burnFactor = max(burnFactor, clamp(1.0 - distToLine / burnRadius, 0.0, 1.0)); // Linear gradient effect based on distance to line
+    // Calculate UV coordinates to look up the face's edge indices in faceIndices texture
+    int width = int(faceDims);
+    int row = int(vFaceIndex) / width;
+    int col = int(vFaceIndex) % width;
+    vec2 faceUV = vec2(float(col) / faceDims, float(row) / faceDims);
+
+    // Fetch the offset in the faceEdgeData (offset to the start of edge indices for this face)
+    int faceOffset = int(texture2D(faceIndices, faceUV).r * 255.0);  // Assuming packed into red channel
+
+    float edgeMark = 0.0;
+
+    // Iterate through the edge indices for this face until we encounter a 0
+    for (int i = 0; i < 10; i++) {  // Assuming a reasonable maximum number of edges per face
+        int edgeIndex = int(texture2D(faceIndices, faceUV + vec2(float(i + faceOffset) / faceDims, 0.0)).r);
+        // edgeMark = float(edgeIndex); break;
+        edgeIndex = 9;
+        if (edgeIndex == 0) break;  // Stop when we encounter the terminator 0
+        edgeMark = float(edgeIndex - 1);// break;
+        // Call getEdgeLine to fetch and process each edge line segment
+        vec3 lineStart = getEdgeLine(edgeIndex - 1);
+        vec3 lineEnd = getEdgeLine(edgeIndex);
+        float distToLine = distanceToLine(vPosition, lineStart, lineEnd);
+        burnFactor = max(burnFactor, clamp(1.0 - distToLine / burnRadius, 0.0, 1.0));
     }
 
     #include <logdepthbuf_fragment>
 
     // Apply darkening effect based on burn factor
-    vec4 burntColor = vec4(color.rgb * (1.0 - burnFactor * 0.8), color.a);  // Darken the color near edges
-    gl_FragColor = burntColor;
+    if (burnFactor > 0.0) {
+        vec4 burntColor = vec4(color.rgb * (1.0 - burnFactor * 0.8), 1.0);
+        gl_FragColor = burntColor;
+    } else {
+        gl_FragColor = color;
+    }
+
+    // apply red wire grid
+    vec3 pos = vPosition;
+    float wireSpacing = 1.01;
+    float threshold = 0.015;
+    float gridX = mod(pos.x, wireSpacing);
+    float gridY = mod(pos.y, wireSpacing);
+    float gridZ = mod(pos.z, wireSpacing);
+
+    // Check if any of the wire positions are close to the grid lines
+    if (gridX < threshold || wireSpacing - gridX < threshold ||
+        gridY < threshold || wireSpacing - gridY < threshold ||
+        gridZ < threshold || wireSpacing - gridZ < threshold) {
+        gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);  // red
+    }
+
+    // mark edge from chosen edgeIndex
+    if (edgeMark != 0.0 && abs(pos.y - edgeMark/10.0) <= threshold) {
+        gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0); // blue
+    }
 }
 `.trim();
 
