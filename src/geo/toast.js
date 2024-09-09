@@ -18,8 +18,21 @@ function createEdgeData(obj, thresholdAngle = 20) {
     const precisionPoints = 4;
     const precision = Math.pow(10, precisionPoints);
     const thresholdDot = Math.cos(MathUtils.DEG2RAD * thresholdAngle);
-    const positionAttr = geometry.getAttribute('position');
-    const indexCount = positionAttr.count;
+    let positionAttr = geometry.getAttribute('position');
+
+    const decim = base.verticesToPoints(positionAttr.array, {
+        threshold: 1,
+        precision: 0.05,
+        maxpass: 10
+    }).map(p => p.toArray()).flat();
+
+    console.log({ decim, array: positionAttr.array });
+    positionAttr = new BufferAttribute(decim.toFloat32(), 3);
+    geometry.setAttribute('position', positionAttr);
+
+    const posArray = positionAttr.array;
+
+    const indexCount = posArray.length;
     const numFaces = indexCount / 3;
     const indexArr = [0, 0, 0];
     const vertKeys = ['a', 'b', 'c'];
@@ -268,6 +281,7 @@ void main() {
 // }
 
 // dep: add.three
+// dep: geo.points
 // dep: moto.license
 gapp.register("geo.toast", [], (root, exports) => {
     exports({
