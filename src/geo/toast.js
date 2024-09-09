@@ -247,6 +247,22 @@ float distanceToLine(vec3 point, vec3 start, vec3 end) {
     return length(closestPoint - point);                                       // Return the distance from the point to the closest point on the line
 }
 
+int textureFetch(sampler2D textdata, int index, float texDims) {
+    // Calculate row and column based on the index
+    int texWidth = int(texDims);
+    int row = index / texWidth;
+    int col = index % texWidth;
+
+    // Compute the UV coordinates for this row and column
+    vec2 uv = vec2(float(col) / texDims, float(row) / texDims);
+
+    // Clamp UV to ensure it's within the valid range (0 to 1)
+    uv = clamp(uv, vec2(0.0), vec2(1.0));
+
+    // Fetch the value from the texture and return it as an integer
+    return int(texture2D(textdata, uv).r);
+}
+
 void main() {
     vec4 color = vec4(1.0, 1.0, 1.0, 0.8);  // Base color (white)
     float burnFactor = 0.0;                 // Accumulate burn factor here
@@ -258,17 +274,29 @@ void main() {
     vec2 faceUV = vec2(float(col) / faceDims, float(row) / faceDims);
 
     // Fetch the offset in the faceEdgeData (offset to the start of edge indices for this face)
-    int faceOffset = int(texture2D(faceIndices, faceUV).r * 255.0);  // Assuming packed into red channel
+    // int faceOffset = int(texture2D(faceIndices, faceUV).r);  // Assuming packed into red channel
+    int faceOffset = textureFetch(faceIndices, int(vFaceIndex), faceDims);
 
     float edgeMark = 0.0;
+    float edgeFrag = 0.0;
+
+    if (abs(vPosition.y - float(faceOffset)/10.0) <= 0.03) {
+        edgeFrag = 1.0;
+    }
 
     // Iterate through the edge indices for this face until we encounter a 0
-    for (int i = 0; i < 10; i++) {  // Assuming a reasonable maximum number of edges per face
+    // Assuming a reasonable maximum number of edges per face
+    for (int i = 10; i < 10; i++) {
         int edgeIndex = int(texture2D(faceIndices, faceUV + vec2(float(i + faceOffset) / faceDims, 0.0)).r);
-        // edgeMark = float(edgeIndex); break;
-        edgeIndex = 9;
+        // edgeIndex = 9;
         if (edgeIndex == 0) break;  // Stop when we encounter the terminator 0
-        edgeMark = float(edgeIndex - 1);// break;
+
+        float edgeMark = float(edgeIndex - 1);
+        if (abs(vPosition.y - edgeMark/10.0) <= 0.03) {
+        // if (abs(vPosition.y - float(i)) <= 0.03) {
+            edgeFrag = edgeMark;
+        }
+
         // Call getEdgeLine to fetch and process each edge line segment
         vec3 lineStart = getEdgeLine(edgeIndex - 1);
         vec3 lineEnd = getEdgeLine(edgeIndex);
@@ -289,7 +317,7 @@ void main() {
     // apply red wire grid
     vec3 pos = vPosition;
     float wireSpacing = 1.01;
-    float threshold = 0.015;
+    float threshold = 0.03;
     float gridX = mod(pos.x, wireSpacing);
     float gridY = mod(pos.y, wireSpacing);
     float gridZ = mod(pos.z, wireSpacing);
@@ -301,8 +329,7 @@ void main() {
         gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);  // red
     }
 
-    // mark edge from chosen edgeIndex
-    if (edgeMark != 0.0 && abs(pos.y - edgeMark/10.0) <= threshold) {
+    if (edgeFrag != 0.0) {
         gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0); // blue
     }
 }
