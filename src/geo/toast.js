@@ -29,27 +29,27 @@ function createEdgeData(obj, thresholdAngle = 20) {
     const faceRecords = new Array(numFaces); // [i1, i2] array per face
     const pointToEdge = {};
 
-    function update(rec, val) {
-        let arr = rec.idx;
-        if (arr.indexOf(val) >= 0) {
-            return;
-        }
-        let io = arr.indexOf(0);
-        if (io >= 0) {
-            arr[io] = val;
-            rec.match++;
-        } else {
-            console.log({ arr, io, val });
-            throw "array full";
-        }
-    }
-
     function updatePoints(pointKey, lineIndex) {
         let edges = pointToEdge[pointKey];
         if (!edges) {
             edges = (pointToEdge[pointKey] = []);
         }
         edges.addOnce(lineIndex);
+    }
+
+    function distToLine(A, B, P) {
+        const AB = new THREE.Vector3().subVectors(B, A);   // Vector from A to B
+        const AP = new THREE.Vector3().subVectors(P, A);   // Vector from A to P
+        const lengthAB = AB.length();  // Length of AB
+        const AB_normalized = AB.clone().normalize(); // Normalize AB to unit length
+        // Project AP onto AB, this gives us the point on the line closest to P
+        const projection = AP.dot(AB_normalized);
+        // Clamp the projection to the bounds of the segment
+        const t = Math.max(0, Math.min(lengthAB, projection));
+        // Find the closest point on the segment to P
+        const closestPoint = AB_normalized.multiplyScalar(t).add(A);
+        // Return the distance between the closest point and P
+        return closestPoint.distanceTo(P);
     }
 
     for (let i = 0, faceId = 0; i < indexCount; i += 3, faceId++) {
@@ -70,7 +70,16 @@ function createEdgeData(obj, thresholdAngle = 20) {
         hashes[2] = `${Math.round(c.x * precision)},${Math.round(c.y * precision)},${Math.round(c.z * precision)}`;
 
         // create face record
-        let rec = faceRecords[faceId] = { points:hashes.slice(), idx:[0,0,0,0], match:0 };
+        let rec = faceRecords[faceId] = {
+            points:hashes.slice(),
+            match:0,
+            on:0,
+            dist:[
+                distToLine(b,c,a),
+                distToLine(c,a,b),
+                distToLine(a,b,c),
+            ]
+        };
 
         // skip degenerate triangles
         if (hashes[0] === hashes[1] || hashes[1] === hashes[2] || hashes[2] === hashes[0]) {
@@ -80,6 +89,7 @@ function createEdgeData(obj, thresholdAngle = 20) {
         // iterate over every edge
         for (let j = 0; j < 3; j++) {
             // get the first and next vertex making up the edge
+            const side = (j + 2) % 3;
             const jNext = (j + 1) % 3;
             const vecHash0 = hashes[j];
             const vecHash1 = hashes[jNext];
@@ -96,12 +106,13 @@ function createEdgeData(obj, thresholdAngle = 20) {
                     let lineIndex = vertices.length / 4 + 1;
                     vertices.push(v0.x, v0.y, v0.z, 0);
                     vertices.push(v1.x, v1.y, v1.z, 0);
-                    // add line index to face and adjoining face
-                    update(rec, lineIndex);
-                    update(faceRecords[adjacent.faceId], lineIndex);
                     // update points on line records
                     updatePoints(vecHash0, lineIndex);
                     updatePoints(vecHash1, lineIndex);
+                    // update "on" flag
+                    let adj = faceRecords[adjacent.faceId];
+                    rec.on |= (1 << side);
+                    adj.on |= (1 << adjacent.side);
                 }
                 edgeData[reverseHash] = null;
             } else if (!(hash in edgeData)) {
@@ -110,30 +121,11 @@ function createEdgeData(obj, thresholdAngle = 20) {
                     index0: indexArr[j],
                     index1: indexArr[jNext],
                     normal: _normal.clone(),
-                    faceId
+                    faceId,
+                    side
                 };
             }
         }
-    }
-
-    // iterate over all remaining, unmatched edges and add them to the vertex array
-    if (false)
-    for ( const key in edgeData ) {
-        if ( edgeData[ key ] ) {
-            const { index0, index1 } = edgeData[ key ];
-            _v0.fromBufferAttribute( positionAttr, index0 );
-            _v1.fromBufferAttribute( positionAttr, index1 );
-            vertices.push( _v0.x, _v0.y, _v0.z, 0 );
-            vertices.push( _v1.x, _v1.y, _v1.z, 0 );
-            console.log('missed', key);
-        }
-    }
-
-    // for faces with no edges matches to lines, check if any of their
-    // points is matched with a line and add those
-    for (let rec of faceRecords.filter(r => r.match === 0)) {
-        let faces = rec.points.map(pk => pointToEdge[pk]);
-        // console.log(faces);
     }
 
     const material = new ShaderMaterial({
@@ -141,30 +133,55 @@ function createEdgeData(obj, thresholdAngle = 20) {
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         uniforms: {
-            burnRadius: { value: 5.0 },
+            burnRadius: { value: 1 },
         }
     });
 
-    const colorAttribute = positionAttr.clone();
-    const colors = colorAttribute.array;
-    const zero = -0.0;
-    const R = 1.0, G = 0.0, B = 0.0;
-    for (let i = 0; i < colors.length; ) {
-        colors[i++] = R * 1.0;
-        colors[i++] = G * 1.0;
-        colors[i++] = B * zero;
+    const color1 = new BufferAttribute(new Float32Array(numFaces * 3 * 2), 2)
+    const array1 = color1.array;
+    const color2 = new BufferAttribute(new Float32Array(numFaces * 3 * 2), 2)
+    const array2 = color2.array;
+    const color3 = new BufferAttribute(new Float32Array(numFaces * 3 * 2), 2)
+    const array3 = color3.array;
 
-        colors[i++] = R * zero;
-        colors[i++] = G * 1.0;
-        colors[i++] = B * 1.0;
+    for (let i = 0, fid = 0; i < array1.length; i += 6) {
+        const rec = faceRecords[fid++];
+        const [ a, b, c ] = rec.dist;
 
-        colors[i++] = R * 1.0;
-        colors[i++] = G * zero;
-        colors[i++] = B * 1.0;
+        console.log(fid, rec.on);
+
+        array1[i + 0] = a;
+        array1[i + 1] = a;
+        if ((rec.on & 1) === 0) {
+            array1[i + 2] = a;
+            array1[i + 3] = a;
+            array1[i + 4] = a;
+            array1[i + 5] = a;
+        }
+
+        array2[i + 2] = b;
+        array2[i + 3] = b;
+        if ((rec.on & 2) === 0) {
+            array2[i + 0] = b;
+            array2[i + 1] = b;
+            array2[i + 4] = b;
+            array2[i + 5] = b;
+        }
+
+        array3[i + 4] = c;
+        array3[i + 5] = c;
+        if ((rec.on & 4) === 0) {
+            array3[i + 0] = c;
+            array3[i + 1] = c;
+            array3[i + 2] = c;
+            array3[i + 3] = c;
+        }
     }
 
     const mgeo = geometry.clone();
-    mgeo.setAttribute('color', colorAttribute);
+    mgeo.setAttribute('color1', color1);
+    mgeo.setAttribute('color2', color2);
+    mgeo.setAttribute('color3', color3);
     const mesh = new THREE.Mesh(mgeo, material);
 
     console.log({ numFaces, faceRecords, pointToEdge, edges: vertices.group(4) });
@@ -173,21 +190,31 @@ function createEdgeData(obj, thresholdAngle = 20) {
 }
 
 const vertexShader = `
-attribute vec3 color;
 varying vec3 vPosition;
-varying vec3 vColor;
+
+attribute vec2 color1;
+attribute vec2 color2;
+attribute vec2 color3;
+
+varying vec2 vColor1;
+varying vec2 vColor2;
+varying vec2 vColor3;
 
 void main() {
-    vColor = color;
+    vColor1 = color1;
+    vColor2 = color2;
+    vColor3 = color3;
     vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
 const fragmentShader = `
-uniform float burnRadius;         // Proximity radius for burn effect
-varying vec3 vPosition;           // Vertex position passed from the vertex shader
-varying vec3 vColor;              // Interpolated color from vertex shader
+uniform float burnRadius;
+varying vec3 vPosition;
+varying vec2 vColor1;
+varying vec2 vColor2;
+varying vec2 vColor3;
 
 float logScale(float value) {
     float epsilon = 1e-6;  // Small constant to avoid log(0)
@@ -196,12 +223,24 @@ float logScale(float value) {
 }
 
 void main() {
-    vec3 color = clamp(vColor, 0.0, 1.0);
-    gl_FragColor = vec4(color, 1.0);  // stock color gradient
+    vec2 color1 = clamp(vColor1, 0.0, 1.0);
+    vec2 color2 = clamp(vColor2, 0.0, 1.0);
+    vec2 color3 = clamp(vColor3, 0.0, 1.0);
+
+    gl_FragColor = vec4(color1, 0.0, 1.0);
+
+    float burn = burnRadius;
+    float cv1 = min(color1.r, color1.g) / burn;
+    float cv2 = min(color2.r, color2.g) / burn;
+    float cv3 = min(color3.r, color3.g) / burn;
+
+    float cv = min(min(cv1, cv2), cv3);
+
+    gl_FragColor = vec4(cv, cv, 0.0, 1.0);
 
     // float maxColor = logScale( (max(max(color.r, color.g), color.b) - 0.5) * 2.0 );
-    float maxColor = (max(max(color.r, color.g), color.b) - 0.5) * 2.0;
-    gl_FragColor = vec4(vec3(maxColor), 1.0);  // Apply grayscale with full opacity
+    // float maxColor = (max(max(color.r, color.g), color.b) - 0.5) * 2.0;
+    // gl_FragColor = vec4(vec3(maxColor), 1.0);  // Apply grayscale with full opacity
 }
 `;
 
