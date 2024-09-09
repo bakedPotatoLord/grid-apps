@@ -199,6 +199,12 @@ function createEdgeData(obj, thresholdAngle = 20) {
 }
 
 const vertexShader = `
+precision highp float;
+precision highp int;
+
+#include <common>
+#include <logdepthbuf_pars_vertex>
+
 varying vec3 vPosition;
 
 attribute vec2 color1;
@@ -215,15 +221,22 @@ void main() {
     vColor3 = color3;
     vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    #include <logdepthbuf_vertex>
 }
 `;
 
 const fragmentShader = `
+precision highp float;
+precision highp int;
+
 uniform float burnRadius;
 varying vec3 vPosition;
 varying vec2 vColor1;
 varying vec2 vColor2;
 varying vec2 vColor3;
+
+#include <common>
+#include <logdepthbuf_pars_fragment>
 
 float logScale(float value) {
     float epsilon = 1e-6;  // Small constant to avoid log(0)
@@ -232,6 +245,8 @@ float logScale(float value) {
 }
 
 void main() {
+	#include <logdepthbuf_fragment>
+
     vec2 color1 = clamp(vColor1, 0.0, 1.0);
     vec2 color2 = clamp(vColor2, 0.0, 1.0);
     vec2 color3 = clamp(vColor3, 0.0, 1.0);
