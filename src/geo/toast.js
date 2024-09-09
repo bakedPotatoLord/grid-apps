@@ -148,8 +148,6 @@ function createEdgeData(obj, thresholdAngle = 20) {
 
     const edgeLines = new THREE.DataTexture(paddedVertices, textureDimension, textureDimension, THREE.RGBAFormat, THREE.FloatType);
     edgeLines.needsUpdate = true;
-    // edgeLines.minFilter = THREE.NearestFilter;
-    // edgeLines.magFilter = THREE.NearestFilter;
 
     const material = new ShaderMaterial({
         vertexShader: vertexShader,
@@ -171,16 +169,27 @@ function createEdgeData(obj, thresholdAngle = 20) {
 }
 
 const vertexShader = `
+precision highp float;
+precision highp int;
+#include <common>
+#include <logdepthbuf_pars_vertex>
+
 uniform sampler2D edgeLines;     // Texture containing edge endpoints
 varying vec3 vPosition;
 
 void main() {
-  vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    #include <logdepthbuf_vertex>
 }
 `;
 
 const fragmentShader = `
+precision highp float;
+precision highp int;
+#include <common>
+#include <logdepthbuf_pars_fragment>
+
 uniform sampler2D edgeLines;      // Texture containing edge line endpoints
 uniform mat4 modelMatrix;         // Pass the modelMatrix to the fragment shader as a uniform
 uniform int totalEdges;           // Total unpadded line count
@@ -196,32 +205,34 @@ vec3 getEdgeLine(int index) {
     vec2 uv = vec2(float(col) / textureDimension, float(row) / textureDimension); // Normalize the texture coordinates (UV)
     vec3 linePoint = texture2D(edgeLines, uv).rgb;                                // Fetch the line point from the 2D texture
     return (modelMatrix * vec4(linePoint, 1.0)).xyz;                              // Transform the line position to world space using modelMatrix
-  }
+}
 
 // Calculate the distance from the fragment to the closest point on a line segment
 float distanceToLine(vec3 point, vec3 start, vec3 end) {
-  vec3 lineDir = normalize(end - start);                                     // Direction of the line
-  vec3 v = point - start;                                                    // Vector from line start to the point
-  float d = dot(v, lineDir);                                                 // Project the point onto the line
-  vec3 closestPoint = start + clamp(d, 0.0, length(end - start)) * lineDir;  // Find the closest point on the line
-  return length(closestPoint - point);                                       // Return the distance from the point to the closest point on the line
+    vec3 lineDir = normalize(end - start);                                     // Direction of the line
+    vec3 v = point - start;                                                    // Vector from line start to the point
+    float d = dot(v, lineDir);                                                 // Project the point onto the line
+    vec3 closestPoint = start + clamp(d, 0.0, length(end - start)) * lineDir;  // Find the closest point on the line
+    return length(closestPoint - point);                                       // Return the distance from the point to the closest point on the line
 }
 
 void main() {
-  vec4 color = vec4(1.0, 1.0, 1.0, 1.0);  // Base color (white)
-  float burnFactor = 0.0;                 // Accumulate burn factor here
+    vec4 color = vec4(1.0, 1.0, 1.0, 1.0);  // Base color (white)
+    float burnFactor = 0.0;                 // Accumulate burn factor here
 
-  // Loop through all line segments in the edgeLines texture
-  for (int i = 0; i < totalEdges; i++) {
-    vec3 lineStart = getEdgeLine(i * 2);                                          // Fetch the start point of the line segment
-    vec3 lineEnd = getEdgeLine(i * 2 + 1);                                        // Fetch the end point of the line segment
-    float distToLine = distanceToLine(vPosition, lineStart, lineEnd);             // Calculate the proximity (distance) to the current line segment
-    burnFactor = max(burnFactor, clamp(1.0 - distToLine / burnRadius, 0.0, 1.0)); // Linear gradient effect based on distance to line
-  }
+    // Loop through all line segments in the edgeLines texture
+    for (int i = 0; i < totalEdges; i++) {
+        vec3 lineStart = getEdgeLine(i * 2);                                          // Fetch the start point of the line segment
+        vec3 lineEnd = getEdgeLine(i * 2 + 1);                                        // Fetch the end point of the line segment
+        float distToLine = distanceToLine(vPosition, lineStart, lineEnd);             // Calculate the proximity (distance) to the current line segment
+        burnFactor = max(burnFactor, clamp(1.0 - distToLine / burnRadius, 0.0, 1.0)); // Linear gradient effect based on distance to line
+    }
 
-  // Apply darkening effect based on burn factor
-  vec4 burntColor = vec4(color.rgb * (1.0 - burnFactor * 0.8), color.a);  // Darken the color near edges
-  gl_FragColor = burntColor;
+    #include <logdepthbuf_fragment>
+
+    // Apply darkening effect based on burn factor
+    vec4 burntColor = vec4(color.rgb * (1.0 - burnFactor * 0.8), color.a);  // Darken the color near edges
+    gl_FragColor = burntColor;
 }
 `;
 
