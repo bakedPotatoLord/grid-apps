@@ -72,12 +72,16 @@ function createEdgeData(obj, thresholdAngle = 20) {
         // create face record
         let rec = faceRecords[faceId] = {
             points:hashes.slice(),
-            match:0,
             on:0,
             dist:[
                 distToLine(b,c,a),
                 distToLine(c,a,b),
                 distToLine(a,b,c),
+            ],
+            len:[
+                a.distanceTo(b),
+                b.distanceTo(c),
+                c.distanceTo(a),
             ]
         };
 
@@ -138,43 +142,48 @@ function createEdgeData(obj, thresholdAngle = 20) {
     });
 
     const color1 = new BufferAttribute(new Float32Array(numFaces * 3 * 2), 2)
-    const array1 = color1.array;
+    const array1 = color1.array.fill(1);
     const color2 = new BufferAttribute(new Float32Array(numFaces * 3 * 2), 2)
-    const array2 = color2.array;
+    const array2 = color2.array.fill(1);
     const color3 = new BufferAttribute(new Float32Array(numFaces * 3 * 2), 2)
-    const array3 = color3.array;
+    const array3 = color3.array.fill(1);
 
     for (let i = 0, fid = 0; i < array1.length; i += 6) {
         const rec = faceRecords[fid++];
         const [ a, b, c ] = rec.dist;
+        const [ al, bl, cl ] = rec.len;
 
-        console.log(fid, rec.on);
+        const onA = rec.on & 1;
+        const onB = rec.on & 2;
+        const onC = rec.on & 4;
 
-        array1[i + 0] = a;
-        array1[i + 1] = a;
-        if ((rec.on & 1) === 0) {
-            array1[i + 2] = a;
-            array1[i + 3] = a;
-            array1[i + 4] = a;
-            array1[i + 5] = a;
+        console.log(fid, rec.on, rec.len);
+
+        if (onA) {
+            array1[i + 0] = a;
+            array1[i + 1] = a;
+            array1[i + 2] = 0;
+            array1[i + 3] = 0;
+            array1[i + 4] = 0;
+            array1[i + 5] = 0;
         }
 
-        array2[i + 2] = b;
-        array2[i + 3] = b;
-        if ((rec.on & 2) === 0) {
-            array2[i + 0] = b;
-            array2[i + 1] = b;
-            array2[i + 4] = b;
-            array2[i + 5] = b;
+        if (onB) {
+            array2[i + 0] = 0;
+            array2[i + 1] = 0;
+            array2[i + 2] = b;
+            array2[i + 3] = b;
+            array2[i + 4] = 0;
+            array2[i + 5] = 0;
         }
 
-        array3[i + 4] = c;
-        array3[i + 5] = c;
-        if ((rec.on & 4) === 0) {
-            array3[i + 0] = c;
-            array3[i + 1] = c;
-            array3[i + 2] = c;
-            array3[i + 3] = c;
+        if (onC) {
+            array3[i + 0] = 0;
+            array3[i + 1] = 0;
+            array3[i + 2] = 0;
+            array3[i + 3] = 0;
+            array3[i + 4] = c;
+            array3[i + 5] = c;
         }
     }
 
