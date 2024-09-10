@@ -248,6 +248,9 @@ function space_init(data) {
                     if (api.mode.is([ api.modes.edge ])) return mesh.edges.add();
                     return shiftKey && api.tool.analyze();
                 case 'KeyE':
+                    if (shiftKey) {
+                        return api.selection.list()[0]?.toast
+                    }
                     if (api.mode.is([ api.modes.sketch ])) {
                         estop(evt);
                         return api.sketch.extrude();
