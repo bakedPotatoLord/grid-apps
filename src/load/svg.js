@@ -16,18 +16,20 @@ function parseAsync(text, opt) {
     });
 }
 
-function parse(text, opt = { soup: true }) {
+function parse(text, opt = { }) {
     const justPoly = opt.flat || false;
-    const fromSoup = opt.soup || justPoly;
+    const fromSoup = opt.soup !== false || justPoly;
+    const rez = (opt.resolution || 1);
+    const segmin = Math.max(1, opt.segmin || 10);
     const objs = [];
     const data = new THREE.SVGLoader().parse(text);
     const paths = data.paths;
     const xmlat = data.xml.attributes;
     const polys = fromSoup ? [] : undefined;
     const scale = xmlat.width?.value.endsWith('in') ? 25.4 : 1;
-    const depth = opt.depth || xmlat['data-km-extrude']?.value
+    const depth = parseFloat(opt.depth || xmlat['data-km-extrude']?.value
         || xmlat['extrude']?.value
-        || {value: 5};
+        || 5);
 
     for (let i = 0; i < paths.length; i++) {
         let path = paths[i];
@@ -37,10 +39,14 @@ function parse(text, opt = { soup: true }) {
         let miter = path.userData?.style?.strokeMiterLimit;
         if (fromSoup) {
             for (let sub of path.subPaths) {
-                let length = sub.getLength();
-                let points = sub.getPoints(sub.curves ? Math.max(length/2, 12) : undefined);
+                let points = sub.curves.map(curve => {
+                    let length = curve.getLength();
+                    let segs = curve.type === 'LineCurve' ?
+                        1 : Math.max(Math.ceil(length * rez), segmin);
+                    return curve.getPoints(segs);
+                }).flat();
                 if (points.length < 3) {
-                    console.log({ sub, length, points });
+                    // console.log({ sub, length, points });
                     continue;
                 }
                 let poly = base.newPolygon().addPoints(points.map(p => base.newPoint(p.x, -p.y, 0)));
@@ -58,8 +64,8 @@ function parse(text, opt = { soup: true }) {
             continue;
         }
         let geom = new THREE.ExtrudeGeometry(shapes, {
+            depth,
             steps: 1,
-            depth: parseFloat(depth.value),
             bevelEnabled: false
         });
         let array = geom.attributes.position.array;
@@ -94,9 +100,8 @@ function parse(text, opt = { soup: true }) {
             return nest;
         }
 
-        let z = parseFloat(depth.value);
         for (let poly of nest) {
-            let obj = poly.extrude(z);
+            let obj = poly.extrude(depth);
             objs.push(obj);
         }
     }
