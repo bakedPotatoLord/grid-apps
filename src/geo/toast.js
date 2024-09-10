@@ -5,7 +5,7 @@
 // toast/burnt-edge material and helpers
 
 // modified EdgesGeometry to preserve edge/face relationships
-function createedgeHash(obj, thresholdAngle = 20) {
+function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
 
     let { geometry } = obj,
         { MathUtils, Triangle, Vector3, BufferAttribute, ShaderMaterial } = THREE,
@@ -38,14 +38,29 @@ function createedgeHash(obj, thresholdAngle = 20) {
         hashes = new Array(3),
         edgeHash = {},
         edgeData = [],
-        pointToEdge = {};
+        pointRecs = {};
+
+    function pointLineDistance(point, start, end) {
+        const lineDir = new THREE.Vector3().subVectors(end, start);
+        const pointToStart = new THREE.Vector3().subVectors(point, start);
+        const t = THREE.MathUtils.clamp(pointToStart.dot(lineDir) / lineDir.lengthSq(), 0, 1);
+        const projection = new THREE.Vector3().copy(lineDir).multiplyScalar(t).add(start);
+        return point.distanceTo(projection);
+    }
+
+    function createHash(vec, pos) {
+        let key = hashes[pos] = `${Math.round(vec.x * precision)},${Math.round(vec.y * precision)},${Math.round(vec.z * precision)}`;
+        let rec = pointRecs[key];
+        if (!rec) {
+            pointRecs[key] = {
+                point: vec.clone(),
+                edges: [],
+            };
+        }
+    }
 
     function updatePoint(pointKey, lineIndex) {
-        let edges = pointToEdge[pointKey];
-        if (!edges) {
-            edges = (pointToEdge[pointKey] = []);
-        }
-        edges.addOnce(lineIndex);
+        pointRecs[pointKey].edges.addOnce(lineIndex);
     }
 
     for (let i = 0, faceId = 0; i < numVerts; i += 3, faceId++) {
@@ -63,10 +78,9 @@ function createedgeHash(obj, thresholdAngle = 20) {
         // compute normal for connected face comparison
         _triangle.getNormal(_normal);
 
-        // create point hashes for the edge
-        hashes[0] = `${Math.round(a.x * precision)},${Math.round(a.y * precision)},${Math.round(a.z * precision)}`;
-        hashes[1] = `${Math.round(b.x * precision)},${Math.round(b.y * precision)},${Math.round(b.z * precision)}`;
-        hashes[2] = `${Math.round(c.x * precision)},${Math.round(c.y * precision)},${Math.round(c.z * precision)}`;
+        createHash(a, 0);
+        createHash(b, 1);
+        createHash(c, 2);
 
         // create face record
         let rec = faces[faceId] = {
@@ -100,17 +114,11 @@ function createedgeHash(obj, thresholdAngle = 20) {
                     let lineIndex = edgeData.length / 4 + 1;
                     edgeData.push(v0.x, v0.y, v0.z, 0);
                     edgeData.push(v1.x, v1.y, v1.z, 0);
-                    // edgeData.push(-15, -15, (lineIndex-1)/10, 0);
-                    // edgeData.push( 15, -15, (lineIndex-1)/10, 0);
                     // add line index to face and adjoining face
                     rec.edges.push(lineIndex);
-                    rec.points.remove(vecHash0);
-                    rec.points.remove(vecHash1);
                     // update adjacent face
                     let adj = faces[adjacent.faceId];
                     adj.edges.push(lineIndex);
-                    adj.points.remove(adjacent.vecHash0);
-                    adj.points.remove(adjacent.vecHash1);
                     // update points on line records
                     updatePoint(vecHash0, lineIndex);
                     updatePoint(vecHash1, lineIndex);
@@ -130,11 +138,33 @@ function createedgeHash(obj, thresholdAngle = 20) {
         }
     }
 
+    // for points with no associated edges, find edge lines within burnRadius
+    for (let [ key, val ] of Object.entries(pointRecs)) {
+        if (val.edges.length === 0) {
+            console.log(key, val);
+            for (let i=0; i<edgeData.length; i += 8) {
+                _v0.set(edgeData[i + 0], edgeData[i + 1], edgeData[i + 2]);
+                _v1.set(edgeData[i + 4], edgeData[i + 5], edgeData[i + 6]);
+                let dist = pointLineDistance(val.point, _v0, _v1);
+                if (dist <= burnRadius) {
+                    console.log('ADD', { dist, p:val.point, v0:_v0, v1:_v1} );
+                    val.edges.push(i/4 + 1);
+                }
+            }
+        }
+    }
+
     // for faces with no edges matches to lines, check if any of their
-    // points is matched with a line and add those
-    for (let rec of faces.filter(r => r.points.length)) {
-        let edges = rec.points.map(pk => pointToEdge[pk]).flat();
-        rec.edges.push(...edges);
+    // points is matched with a line and add those]
+    let maxEdges = 0;
+    let minEdges = Infinity;
+    for (let rec of faces) {
+        let edges = rec.points.map(pk => pointRecs[pk].edges).flat();
+        // console.log(edges);
+        // TODO fix ... why do we need at least one value before 0??
+        rec.edges = [...rec.edges, ...edges, -1].uniq();
+        maxEdges = Math.max(maxEdges, rec.edges.length);
+        minEdges = Math.min(minEdges, rec.edges.length);
     }
 
     // encode face to edge index array buffer
@@ -172,11 +202,12 @@ function createedgeHash(obj, thresholdAngle = 20) {
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         uniforms: {
-            burnRadius: { value: 1.0 },
+            burnRadius: { value: burnRadius },
             edgeLines: { value: edgeLines },
             edgeDims: { value: edgeDims },
             faceIndices: { value: faceIndices },
-            faceDims: { value: faceDims }
+            faceDims: { value: faceDims },
+            maxEdges: { value: maxEdges }
         }
     });
 
@@ -184,6 +215,9 @@ function createedgeHash(obj, thresholdAngle = 20) {
     let mesh = new THREE.Mesh(mgeo, material);
 
     console.log({
+        minEdges,
+        maxEdges,
+        pointRecs,
         faces,
         faceDims,
         faceTextData,
@@ -225,6 +259,7 @@ uniform sampler2D edgeLines;      // Texture containing edge line endpoints
 uniform mat4 modelMatrix;         // Pass the modelMatrix to the fragment shader as a uniform
 uniform float burnRadius;         // Proximity radius for burn effect
 uniform float edgeDims;           // The width and height of the square texture
+uniform int maxEdges;             // max edge count from geometry
 varying vec3 vPosition;           // Vertex position passed from the vertex shader
 varying float vFaceIndex;         // Face index passed from the vertex shader
 
@@ -270,23 +305,11 @@ void main() {
     // Fetch the offset in the faceEdgeData (offset to the start of edge indices for this face)
     int faceOffset = textureFetch(faceIndices, int(vFaceIndex), faceDims);
 
-    float edgeFrag = 0.0;
-    // if (abs(vPosition.y - float(faceOffset)/10.0) <= 0.03) {
-    //     edgeFrag = 1.0;
-    // }
-
     // Iterate through the edge indices for this face until we encounter a 0
     // Assuming a reasonable maximum number of edges per face
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < maxEdges; i++) {
         int edgeIndex = textureFetch(faceIndices, i + faceOffset, faceDims);
-        // edgeIndex = 9;
-        if (edgeIndex == 0) break;  // Stop when we encounter the terminator 0
-
-        float edgeMark = float(edgeIndex - 1);
-        // if (abs(vPosition.y - float(i)) <= 0.03) {
-        if (abs(vPosition.y - edgeMark) <= 0.03) {
-            edgeFrag = edgeMark;
-        }
+        if (edgeIndex == 0) break;
 
         // Call getEdgeLine to fetch and process each edge line segment
         vec3 lineStart = getEdgeLine(edgeIndex - 1);
@@ -303,25 +326,6 @@ void main() {
         gl_FragColor = burntColor;
     } else {
         gl_FragColor = color;
-    }
-
-    // apply red wire grid
-    vec3 pos = vPosition;
-    float wireSpacing = 1.01;
-    float threshold = 0.03;
-    float gridX = mod(pos.x, wireSpacing);
-    float gridY = mod(pos.y, wireSpacing);
-    float gridZ = mod(pos.z, wireSpacing);
-
-    // Check if any of the wire positions are close to the grid lines
-    if (gridX < threshold || wireSpacing - gridX < threshold ||
-        gridY < threshold || wireSpacing - gridY < threshold ||
-        gridZ < threshold || wireSpacing - gridZ < threshold) {
-        gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);  // red
-    }
-
-    if (edgeFrag != 0.0) {
-        gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0); // blue
     }
 }
 `.trim();
