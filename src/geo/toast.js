@@ -98,10 +98,10 @@ function createedgeHash(obj, thresholdAngle = 20) {
                 // it meets the angle threshold and delete the edge from the map
                 if (_normal.dot(edgeHash[reverseHash].normal) <= thresholdDot) {
                     let lineIndex = edgeData.length / 4 + 1;
-                    // edgeData.push(v0.x, v0.y, v0.z, 0);
-                    // edgeData.push(v1.x, v1.y, v1.z, 0);
-                    edgeData.push(-5, -5, (lineIndex-1)/10, 0);
-                    edgeData.push( 5, -5, (lineIndex-1)/10, 0);
+                    edgeData.push(v0.x, v0.y, v0.z, 0);
+                    edgeData.push(v1.x, v1.y, v1.z, 0);
+                    // edgeData.push(-15, -15, (lineIndex-1)/10, 0);
+                    // edgeData.push( 15, -15, (lineIndex-1)/10, 0);
                     // add line index to face and adjoining face
                     rec.edges.push(lineIndex);
                     rec.points.remove(vecHash0);
@@ -267,33 +267,24 @@ void main() {
     vec4 color = vec4(1.0, 1.0, 1.0, 0.8);  // Base color (white)
     float burnFactor = 0.0;                 // Accumulate burn factor here
 
-    // Calculate UV coordinates to look up the face's edge indices in faceIndices texture
-    int width = int(faceDims);
-    int row = int(vFaceIndex) / width;
-    int col = int(vFaceIndex) % width;
-    vec2 faceUV = vec2(float(col) / faceDims, float(row) / faceDims);
-
     // Fetch the offset in the faceEdgeData (offset to the start of edge indices for this face)
-    // int faceOffset = int(texture2D(faceIndices, faceUV).r);  // Assuming packed into red channel
     int faceOffset = textureFetch(faceIndices, int(vFaceIndex), faceDims);
 
-    float edgeMark = 0.0;
     float edgeFrag = 0.0;
-
-    if (abs(vPosition.y - float(faceOffset)/10.0) <= 0.03) {
-        edgeFrag = 1.0;
-    }
+    // if (abs(vPosition.y - float(faceOffset)/10.0) <= 0.03) {
+    //     edgeFrag = 1.0;
+    // }
 
     // Iterate through the edge indices for this face until we encounter a 0
     // Assuming a reasonable maximum number of edges per face
-    for (int i = 10; i < 10; i++) {
-        int edgeIndex = int(texture2D(faceIndices, faceUV + vec2(float(i + faceOffset) / faceDims, 0.0)).r);
+    for (int i = 0; i < 10; i++) {
+        int edgeIndex = textureFetch(faceIndices, i + faceOffset, faceDims);
         // edgeIndex = 9;
         if (edgeIndex == 0) break;  // Stop when we encounter the terminator 0
 
         float edgeMark = float(edgeIndex - 1);
-        if (abs(vPosition.y - edgeMark/10.0) <= 0.03) {
         // if (abs(vPosition.y - float(i)) <= 0.03) {
+        if (abs(vPosition.y - edgeMark) <= 0.03) {
             edgeFrag = edgeMark;
         }
 
