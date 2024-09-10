@@ -48,6 +48,33 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
         return point.distanceTo(projection);
     }
 
+    function lineLineDistance(p1, p2, q1, q2) {
+        const d1 = new THREE.Vector3().subVectors(p2, p1); // Direction vector of the first segment
+        const d2 = new THREE.Vector3().subVectors(q2, q1); // Direction vector of the second segment
+        const r = new THREE.Vector3().subVectors(p1, q1);  // Vector between the starting points of the two segments
+        const a = d1.dot(d1);  // Squared length of segment p1p2
+        const b = d1.dot(d2);  // Dot product of d1 and d2
+        const c = d2.dot(d2);  // Squared length of segment q1q2
+        const d = d1.dot(r);   // Dot product of d1 and r
+        const e = d2.dot(r);   // Dot product of d2 and r
+        const denom = a * c - b * b;  // Denominator of the parametric solution
+        let s, t;
+        // If denom is zero, the lines are almost parallel
+        if (denom !== 0) {
+            s = (b * e - c * d) / denom;
+            s = THREE.MathUtils.clamp(s, 0, 1);  // Clamp s to [0, 1]
+        } else {
+            s = 0;  // If lines are parallel, set s to 0
+        }
+        t = (b * s + e) / c;
+        t = THREE.MathUtils.clamp(t, 0, 1);  // Clamp t to [0, 1]
+        // Compute the closest points on both segments
+        const closestPointP = new THREE.Vector3().copy(p1).addScaledVector(d1, s);
+        const closestPointQ = new THREE.Vector3().copy(q1).addScaledVector(d2, t);
+        // Return the distance between the closest points
+        return closestPointP.distanceTo(closestPointQ);
+    }
+
     function createHash(vec, pos) {
         let key = hashes[pos] = `${Math.round(vec.x * precision)},${Math.round(vec.y * precision)},${Math.round(vec.z * precision)}`;
         let rec = pointRecs[key];
@@ -138,6 +165,9 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
         }
     }
 
+    // TODO check all non-edge face lines against edge lines and
+    // if they are closer than burnRadius, add edge to that face
+
     // for points with no associated edges, find edge lines within burnRadius
     for (let [ key, val ] of Object.entries(pointRecs)) {
         for (let i=0; i<edgeData.length; i += 8) {
@@ -147,14 +177,12 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
             if (dist <= burnRadius) {
                 console.log('ADD', { dist, p:val.point, v0:_v0, v1:_v1} );
                 val.edges.addOnce(i/4 + 1);
-                // TODO if a point is near an edge, check the min distance
-                // between the two lines connected to this point and all edges
             }
         }
     }
 
     // for faces with no edges matches to lines, check if any of their
-    // points is matched with a line and add those]
+    // points is matched with a line and add those
     let maxEdges = 0;
     let minEdges = Infinity;
     for (let rec of faces) {
@@ -225,7 +253,11 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
         edgeTextData,
     });
 
-    return { edgeData, material, mesh };
+    return {
+        edgeData,
+        material,
+        mesh,
+    };
 }
 
 let vertexShader = `

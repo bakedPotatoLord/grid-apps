@@ -381,13 +381,12 @@ mesh.model = class MeshModel extends mesh.object {
     get toast() {
         let toast = geo.toast.create(this.mesh, 20);
 
-        // moto.space.world.remove(root._o);
-        // let edges = new THREE.BufferGeometry();
-        // edges.setAttribute('position', new THREE.Float32BufferAttribute( toast.vertices, 4 ));
-        // let material = new THREE.LineBasicMaterial({ color: 0 });
-        // let outline = root._o = new THREE.LineSegments(edges, material);
-        // outline.position.set(0,0,-10);
-        // moto.space.world.add(outline);
+        this.mesh.remove(root._o);
+        let edges = new THREE.BufferGeometry();
+        edges.setAttribute('position', new THREE.Float32BufferAttribute( toast.edgeData, 4 ));
+        let material = new THREE.LineBasicMaterial({ color: 0 });
+        let outline = root._o = new THREE.LineSegments(edges, material);
+        this.mesh.add(outline);
 
         moto.space.world.remove(root._t);
         moto.space.world.add(root._t = toast.mesh);
