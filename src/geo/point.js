@@ -149,6 +149,7 @@ class Point {
         return Math.sqrt(this.distToLineSq(p1, p2));
     }
 
+    // has some broken cases ... pointLineDistance() in geo/toast.js seems to do better
     distToLine3D(lp1, lp2) {
         // Convert points to vectors
         const p0 = [this.x, this.y, this.z];

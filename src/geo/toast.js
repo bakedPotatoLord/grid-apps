@@ -144,10 +144,11 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
             _v0.set(edgeData[i + 0], edgeData[i + 1], edgeData[i + 2]);
             _v1.set(edgeData[i + 4], edgeData[i + 5], edgeData[i + 6]);
             let dist = pointLineDistance(val.point, _v0, _v1);
-            // let dist = base.newPoint(val.point.x, val.point.y, val.point.z).distToLine3D(_v0, _v1);
             if (dist <= burnRadius) {
                 console.log('ADD', { dist, p:val.point, v0:_v0, v1:_v1} );
                 val.edges.addOnce(i/4 + 1);
+                // TODO if a point is near an edge, check the min distance
+                // between the two lines connected to this point and all edges
             }
         }
     }
@@ -362,7 +363,6 @@ void main() {
 // dep: add.three
 // dep: geo.points
 // dep: moto.license
-// use: geo.point
 gapp.register("geo.toast", [], (root, exports) => {
     exports({
         create: createedgeHash
