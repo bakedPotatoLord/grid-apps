@@ -37,8 +37,9 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
         faces = new Array(numFaces),
         hashes = new Array(3),
         edgeHash = {},
-        edgeData = [],
-        pointRecs = {};
+        edgeData = [],  // todo dedup w/ edgeMrk/Cmp
+        edgeMrk = [],   // marked edges
+        edgeCmp = [];   // unmarked edges
 
     function pointLineDistance(point, start, end) {
         const lineDir = new THREE.Vector3().subVectors(end, start);
@@ -77,17 +78,6 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
 
     function createHash(vec, pos) {
         let key = hashes[pos] = `${Math.round(vec.x * precision)},${Math.round(vec.y * precision)},${Math.round(vec.z * precision)}`;
-        let rec = pointRecs[key];
-        if (!rec) {
-            pointRecs[key] = {
-                point: vec.clone(),
-                edges: [],
-            };
-        }
-    }
-
-    function updatePoint(pointKey, lineIndex) {
-        pointRecs[pointKey].edges.addOnce(lineIndex);
     }
 
     for (let i = 0, faceId = 0; i < numVerts; i += 3, faceId++) {
@@ -112,7 +102,8 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
         // create face record
         let rec = faces[faceId] = {
             edges: [],
-            points: hashes.slice()
+            // points: hashes.slice(),
+            verts: [ a, b, c ].map(v => v.clone() )
         };
 
         // skip degenerate triangles
@@ -146,9 +137,18 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
                     // update adjacent face
                     let adj = faces[adjacent.faceId];
                     adj.edges.push(lineIndex);
-                    // update points on line records
-                    updatePoint(vecHash0, lineIndex);
-                    updatePoint(vecHash1, lineIndex);
+                    // store to compare with edgeCmp
+                    edgeMrk.push({
+                        faces: [ rec, adjacent ],
+                        edge: [ v0.clone(), v1.clone() ],
+                        lineIndex
+                    })
+                } else {
+                    // track unmarked edges to compare to all other edges
+                    edgeCmp.push({
+                        faces: [ rec, faces[adjacent.faceId] ],
+                        edge: [ v0.clone(), v1.clone() ]
+                    });
                 }
                 edgeHash[reverseHash] = null;
             } else if (!(hash in edgeHash)) {
@@ -165,18 +165,17 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
         }
     }
 
-    // TODO check all non-edge face lines against edge lines and
-    // if they are closer than burnRadius, add edge to that face
-
-    // for points with no associated edges, find edge lines within burnRadius
-    for (let [ key, val ] of Object.entries(pointRecs)) {
-        for (let i=0; i<edgeData.length; i += 8) {
-            _v0.set(edgeData[i + 0], edgeData[i + 1], edgeData[i + 2]);
-            _v1.set(edgeData[i + 4], edgeData[i + 5], edgeData[i + 6]);
-            let dist = pointLineDistance(val.point, _v0, _v1);
-            if (dist <= burnRadius) {
-                console.log('ADD', { dist, p:val.point, v0:_v0, v1:_v1} );
-                val.edges.addOnce(i/4 + 1);
+    // check all non-marked edges against marked edges and
+    // if they are closer than burnRadius, add edge to adjacent faces
+    let match = 0;
+    for (let cmp of edgeCmp) {
+        for (let mrk of edgeMrk) {
+            let dist = lineLineDistance(cmp.edge[0], cmp.edge[1], mrk.edge[0], mrk.edge[1]);
+            if (dist <= burnRadius * 1) {
+                // console.log(++match, dist);
+                cmp.faces.forEach(rec => {
+                    rec.edges.addOnce(mrk.lineIndex);
+                });
             }
         }
     }
@@ -186,10 +185,8 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
     let maxEdges = 0;
     let minEdges = Infinity;
     for (let rec of faces) {
-        let edges = rec.points.map(pk => pointRecs[pk].edges).flat();
-        // console.log(edges);
         // TODO fix ... why do we need at least one value before 0??
-        rec.edges = [...rec.edges, ...edges, -1].uniq();
+        rec.edges = [ ...rec.edges, -1 ];
         maxEdges = Math.max(maxEdges, rec.edges.length);
         minEdges = Math.min(minEdges, rec.edges.length);
     }
@@ -244,13 +241,15 @@ function createedgeHash(obj, thresholdAngle = 20, burnRadius = 1) {
     console.log({
         minEdges,
         maxEdges,
-        pointRecs,
         faces,
         faceDims,
         faceTextData,
         edges: edgeData.group(4),
         edgeDims,
         edgeTextData,
+
+        edgeMrk,
+        edgeCmp
     });
 
     return {
